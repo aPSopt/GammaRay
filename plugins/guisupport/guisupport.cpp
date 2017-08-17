@@ -43,8 +43,10 @@
 #include <QWindow>
 #endif
 
+#include <QIcon>
 #include <QFont>
 #include <QPaintDevice>
+#include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
 #include <QPen>
@@ -66,6 +68,12 @@ GuiSupport::GuiSupport(GammaRay::ProbeInterface *probe, QObject *parent)
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
     connect(m_probe->probe(), SIGNAL(objectCreated(QObject*)), SLOT(objectCreated(QObject*)));
+
+    m_probe->installGlobalEventFilter(this);
+    for (auto w : qApp->topLevelWindows()) {
+        updateWindowIcon(w);
+        updateWindowTitle(w);
+    }
 #endif
 }
 
@@ -360,6 +368,47 @@ void GuiSupport::registerVariantHandler()
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
+void GuiSupport::updateWindowTitle(QWindow *w)
+{
+    auto suffix = tr(" (Injected by GammaRay)");
+    if (w->title().endsWith(suffix))
+        return;
+    w->setTitle(w->title() + suffix);
+}
+
+void GuiSupport::updateWindowIcon(QWindow *w)
+{
+    static QVector<QPixmap> gammarayIcons;
+    static const auto theme = QLatin1String("gammaray");
+    if (gammarayIcons.isEmpty()) {
+        gammarayIcons << QPixmap(QLatin1String(":/gammaray/images/gama-inject-16.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-22.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-24.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-32.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-48.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-64.png"))
+                      << QPixmap(QLatin1String(":/gammaray/images/gama-inject-128.png"));
+    }
+
+    QIcon oldIcon = w->icon();
+    if (oldIcon.isNull() || oldIcon.themeName() == theme) {
+        return;
+    }
+    qDebug()  << "icon" << oldIcon.themeName() << oldIcon.actualSize({128, 128}) << oldIcon.availableSizes();
+    QIcon newIcon;
+    newIcon.setThemeName(theme);
+
+    for (const auto &pixmap : gammarayIcons) {
+        QPixmap pix(oldIcon.pixmap(oldIcon.actualSize(pixmap.size())));
+        {
+            QPainter p(&pix);
+            p.drawPixmap(0, 0, pixmap);
+        }
+        newIcon.addPixmap(pix);
+    }
+    w->setIcon(newIcon);
+}
+
 void GuiSupport::discoverObjects()
 {
     foreach (QWindow *window, qApp->topLevelWindows())
@@ -370,6 +419,24 @@ void GuiSupport::objectCreated(QObject *object)
 {
     if (qobject_cast<QGuiApplication *>(object))
         discoverObjects();
+}
+
+bool GuiSupport::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::WindowTitleChange) {
+        if (auto w = qobject_cast<QWindow*>(watched)) {
+            if (w->isTopLevel()) {
+                updateWindowTitle(w);
+            }
+        }
+    } else if(event->type() == QEvent::WindowIconChange) {
+        if (auto w = qobject_cast<QWindow*>(watched)) {
+            if (w->isTopLevel()) {
+                updateWindowIcon(w);
+            }
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 #endif
 
